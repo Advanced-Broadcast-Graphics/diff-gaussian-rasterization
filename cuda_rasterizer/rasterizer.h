@@ -14,13 +14,50 @@
 
 #include <vector>
 #include <functional>
+#include <vector_types.h>
 
-namespace CudaRasterizer
-{
+namespace CudaRasterizer {
+	struct GeometryState {
+		size_t scan_size;
+		float* depths;
+		char* scanning_space;
+		bool* clamped;
+		int* internal_radii;
+		float2* means2D;
+		float* cov3D;
+		float4* conic_opacity;
+		float* rgb;
+		uint32_t* point_offsets;
+		uint32_t* tiles_touched;
+
+		static GeometryState fromChunk(char*& chunk, size_t P);
+	};
+
+	struct ImageState {
+		uint2* ranges;
+		uint32_t* n_contrib;
+		float* accum_alpha;
+
+		static ImageState fromChunk(char*& chunk, size_t N);
+	};
+
+	struct BinningState {
+		size_t sorting_size;
+		uint64_t* point_list_keys_unsorted;
+		uint64_t* point_list_keys;
+		uint32_t* point_list_unsorted;
+		uint32_t* point_list;
+		char* list_sorting_space;
+
+		static BinningState fromChunk(char*& chunk, size_t P);
+	};
 	class Rasterizer
 	{
 	public:
-
+		static void InclusiveSum(GeometryState& geomState, int P);
+		static void DuplicateWithKeys(GeometryState& geomState, BinningState& binningState, int P, int* radii, dim3 tile_grid, int* rects);
+		static void SortPairs(BinningState& binningState, int P, int num_rendered, int bit);
+		static void IdentifyTileRanges(int num_rendered, uint64_t* point_list_keys, uint2* ranges);
 		static void markVisible(
 			int P,
 			float* means3D,
@@ -50,7 +87,9 @@ namespace CudaRasterizer
 			const bool prefiltered,
 			float* out_color,
 			int* radii = nullptr,
-			bool debug = false);
+			int* rects = nullptr,
+			float* boxmin = nullptr,
+			float* boxmax = nullptr);
 
 		static void backward(
 			const int P, int D, int M, int R,
@@ -80,9 +119,31 @@ namespace CudaRasterizer
 			float* dL_dcov3D,
 			float* dL_dsh,
 			float* dL_dscale,
-			float* dL_drot,
-			bool debug);
+			float* dL_drot);
 	};
-};
+
+	template <typename T>
+	size_t required(size_t P) {
+		char* size = nullptr;
+		T::fromChunk(size, P);
+		return ((size_t)size) + 128;
+	}
+	// Helper function to find the next-highest bit of the MSB
+	// on the CPU.
+	inline uint32_t getHigherMsb(uint32_t n) {
+		uint32_t msb = sizeof(n) * 4;
+		uint32_t step = msb;
+		while (step > 1) {
+			step /= 2;
+			if (n >> msb)
+				msb += step;
+			else
+				msb -= step;
+		}
+		if (n >> msb)
+			msb++;
+		return msb;
+	}
+}
 
 #endif
